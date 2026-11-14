@@ -156,7 +156,7 @@ export class Lifts {
       const lift = {
         name: L.name || 'Lift', kind: L.kind, surface, gondola, speed, spacing, up: upRope, down: downRope, H, gauge,
         bottom: ground3[0], top: ground3[n - 1], topDir: dirs[n - 1], bottomDir: dirs[0], right0: right[0], rightN: right[n - 1],
-        loop: upRope.length + downRope.length, phase: hash(this.list.length, 3) * 100, seats: L.seats || 1,
+        clear: surface ? 6 : (gondola ? 22 : 16) * 0.85 + 7, loop: upRope.length + downRope.length, phase: hash(this.list.length, 3) * 100, seats: L.seats || 1,
       };
       lift.count = Math.max(2, Math.floor(lift.loop / spacing));
       this.list.push(lift);
@@ -261,7 +261,7 @@ export class Lifts {
     if (L.surface) m.scale.copy(this.dragScale(m.position)); else m.scale.set(1, 1, 1);
     m.visible = true;
   }
-  nearestBottom(p, maxDist = 28) {
+  nearestBottom(p, maxDist = 36) {
     let best = null, bd = maxDist;
     for (const L of this.list) {
       const d = Math.hypot(L.bottom.x - p.x, L.bottom.z - p.z);

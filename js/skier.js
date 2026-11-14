@@ -164,7 +164,7 @@ export class Player {
       this.yaw = Math.atan2(d.x, d.z);
     }
     if (R.s >= L.up.length - 2) {
-      const exit = L.top.clone().addScaledVector(L.topDir, L.surface ? 6 : 14).addScaledVector(L.rightN, L.surface ? 4 : 0);
+      const exit = L.top.clone().addScaledVector(L.topDir, L.clear).addScaledVector(L.rightN, L.surface ? 4 : 0);
       this.place(exit, Math.atan2(L.topDir.x, L.topDir.z), 2.5);
       this.events.push({ type: 'top', lift: L });
       return;

@@ -97,7 +97,7 @@ async function load() {
   player = new Player(scene, objMat, ground, forest);
   crowd = new Crowd(scene, objMat, pistes, ground, touchDevice ? 50 : 100);
   rmap = new ResortMap(ground, features, lifts);
-  spawnAtLift(lifts.list.find((L) => L.name === 'Komperdellbahn') || lifts.list[0], 'top');
+  spawnAtLift(lifts.list.find((L) => L.name === 'Almbahn') || lifts.list[0], 'top');
   applyQuality();
   camState.pos.copy(player.pos).add(new THREE.Vector3(0, 30, -60));
   // build what's around the start before the button lights up
@@ -111,11 +111,11 @@ async function load() {
 let lastTop = null;
 function spawnAtLift(L, where) {
   if (where === 'top') {
-    const p = L.top.clone().addScaledVector(L.topDir, L.surface ? 6 : 16);
+    const p = L.top.clone().addScaledVector(L.topDir, L.clear);
     player.place(p, player.downhillYaw(p));
     lastTop = L;
   } else {
-    const p = L.bottom.clone().addScaledVector(L.bottomDir, -12);
+    const p = L.bottom.clone().addScaledVector(L.bottomDir, -L.clear);
     player.place(p, Math.atan2(L.bottomDir.x, L.bottomDir.z));
   }
   camState.snap = true;
