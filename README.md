@@ -3,7 +3,7 @@
 A low-poly ski game in the browser, on the real terrain, lifts and pistes of Serfaus-Fiss-Ladis (Tyrol).
 It's the web version of the PolyCabin Unreal ski game, rewritten in three.js.
 
-**Play:** https://thiessosterloh-collab.github.io/polycabin-ski/
+**Play:** https://albatrossassistent.github.io/polycabin-ski/
 
 ## Controls
 A/D turn · W tuck (skate when slow) · S brake · Space jump (fast-forward on lifts) · E ride lift · M map (click to teleport) · C camera · V piste colours · G graphics · R back to last lift top · H help
