@@ -1,8 +1,8 @@
 import * as THREE from 'three';
 import { fetchBytes, decodeHeights, readHeader, clamp, lerp } from './util.js';
-import { Ground, Terrain, Forest, buildBackdrop } from './terrain.js';
+import { Ground, Terrain, Forest, buildBackdrop, snowMaterial } from './terrain.js';
 import { buildBuildings, Lifts, PisteIndex } from './world.js';
-import { Player, Crowd, riderGeometry } from './skier.js';
+import { Player, Crowd, riderGeometries } from './skier.js';
 import { ResortMap } from './map.js';
 
 const $ = (id) => document.getElementById(id);
@@ -12,24 +12,53 @@ const touchDevice = matchMedia('(pointer: coarse)').matches;
 const canvas = $('view');
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: !touchDevice, powerPreference: 'high-performance' });
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 0.95;
+renderer.toneMappingExposure = 1.0;
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 const scene = new THREE.Scene();
-const HORIZON = new THREE.Color(0xc9dcef);
-scene.fog = new THREE.Fog(HORIZON, 2500, 26000);
-const camera = new THREE.PerspectiveCamera(60, 1, 0.5, 60000);
+const HORIZON = new THREE.Color(0xc4d8ee);
+scene.fog = new THREE.Fog(HORIZON, 1800, 24000);
+const camera = new THREE.PerspectiveCamera(60, 1, 0.4, 60000);
 
-const quality = { high: !touchDevice };
+// Quality tiers. Phones get "medium"; resolution then adapts to hold the frame rate.
+const TIERS = {
+  low: { name: 'low', dpr: 1, shadow: 0, trees: [1300, 400, 0.3, 0], lod: 0.55, crowd: 35, detail: 0, bld: 600 },
+  medium: { name: 'medium', dpr: 1.5, shadow: 1024, trees: [2000, 750, 0.4, 260], lod: 0.8, crowd: 60, detail: 1, bld: 1000 },
+  high: { name: 'high', dpr: 2, shadow: 2048, trees: [2800, 1100, 0.5, 420], lod: 1, crowd: 100, detail: 1, bld: 1500 },
+};
+const ORDER = ['low', 'medium', 'high'];
+function detectTier() {
+  try {
+    const q = new URLSearchParams(location.search).get('q');
+    if (q && TIERS[q]) return q;
+    const gl = renderer.getContext(), ext = gl.getExtension('WEBGL_debug_renderer_info');
+    const name = ext ? gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) : '';
+    if (/swiftshader|llvmpipe|software|basic render/i.test(name)) return 'low';
+  } catch { /* ignore */ }
+  return touchDevice ? 'medium' : 'high';
+}
+let tier = TIERS[detectTier()];
+let resScale = 1;
+function pixelRatio() { return Math.min(devicePixelRatio, tier.dpr) * resScale; }
 function applyQuality() {
-  renderer.setPixelRatio(Math.min(devicePixelRatio, quality.high ? 1.75 : 1));
-  renderer.shadowMap.enabled = quality.high;
-  sun.castShadow = quality.high;
-  if (terrain) terrain.lodScale = quality.high ? 1 : 0.6;
-  if (forest) {
-    forest.radius = quality.high ? 2400 : 1300; forest.nearRadius = quality.high ? 1000 : 500; forest.shadows = quality.high; forest.clear();
+  renderer.setPixelRatio(pixelRatio());
+  renderer.shadowMap.enabled = tier.shadow > 0;
+  sun.castShadow = tier.shadow > 0;
+  if (tier.shadow) {
+    if (sun.shadow.mapSize.x !== tier.shadow) { sun.shadow.mapSize.set(tier.shadow, tier.shadow); sun.shadow.map?.dispose(); sun.shadow.map = null; }
+    const r = tier.shadow > 1024 ? 90 : 55;
+    Object.assign(sun.shadow.camera, { left: -r, right: r, top: r, bottom: -r });
+    sun.shadow.camera.updateProjectionMatrix();
   }
-  scene.traverse((o) => { if (o.material) o.material.needsUpdate = true; });
+  terrainMat.userData.detail.value = tier.detail;
+  if (terrain) terrain.lodScale = tier.lod;
+  if (forest) {
+    [forest.radius, forest.nearRadius, forest.farDensity, forest.detailRadius] = tier.trees;
+    forest.shadows = tier.shadow > 0; forest.clear();
+  }
+  if (crowd) crowd.active = tier.crowd;
+  if (player) player.blobEnabled = !tier.shadow;
+  scene.traverse((o) => { if (o.material && !Array.isArray(o.material)) o.material.needsUpdate = true; });
   resize();
 }
 function resize() {
@@ -39,14 +68,28 @@ function resize() {
 }
 addEventListener('resize', resize);
 
-// sky dome
+// sky dome with soft drifting clouds
 const sky = new THREE.Mesh(new THREE.SphereGeometry(50000, 32, 16), new THREE.ShaderMaterial({
   side: THREE.BackSide, depthWrite: false, fog: false,
-  uniforms: { top: { value: new THREE.Color(0x2d6fc4) }, horizon: { value: HORIZON }, sunDir: { value: new THREE.Vector3() } },
+  uniforms: { top: { value: new THREE.Color(0x2763b8) }, horizon: { value: HORIZON }, sunDir: { value: new THREE.Vector3() }, time: { value: 0 } },
   vertexShader: 'varying vec3 vDir; void main(){ vDir = normalize(position); gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); gl_Position.z = gl_Position.w; }',
-  fragmentShader: `uniform vec3 top; uniform vec3 horizon; uniform vec3 sunDir; varying vec3 vDir;
-    void main(){ float h = max(vDir.y, 0.0); vec3 c = mix(horizon, top, pow(h, 0.55));
-      float s = max(dot(normalize(vDir), sunDir), 0.0); c += vec3(1.0,0.9,0.7) * (pow(s, 600.0) * 4.0 + pow(s, 12.0) * 0.18);
+  fragmentShader: `uniform vec3 top; uniform vec3 horizon; uniform vec3 sunDir; uniform float time; varying vec3 vDir;
+    float h21(vec2 p){ p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }
+    float vn(vec2 p){ vec2 i = floor(p), f = fract(p); f = f*f*(3.0-2.0*f);
+      return mix(mix(h21(i), h21(i+vec2(1,0)), f.x), mix(h21(i+vec2(0,1)), h21(i+vec2(1,1)), f.x), f.y); }
+    float fbm(vec2 p){ float a = 0.5, s = 0.0; for (int i = 0; i < 5; i++){ s += a * vn(p); p = p * 2.03 + 7.1; a *= 0.5; } return s; }
+    void main(){
+      vec3 d = normalize(vDir); float h = max(d.y, 0.0);
+      vec3 c = mix(horizon, top, pow(h, 0.5));
+      float s = max(dot(d, sunDir), 0.0);
+      c += vec3(1.0, 0.92, 0.75) * (pow(s, 900.0) * 6.0 + pow(s, 14.0) * 0.22);
+      if (d.y > 0.0) {
+        vec2 uv = d.xz / (d.y + 0.12) * 1.6 + vec2(time * 0.004, time * 0.0015);
+        float cl = smoothstep(0.52, 0.82, fbm(uv));
+        float shade = 0.82 + 0.18 * fbm(uv * 2.0 + 3.0);
+        vec3 cc = vec3(1.0) * shade + vec3(1.0, 0.9, 0.75) * pow(s, 6.0) * 0.4;
+        c = mix(c, cc, cl * smoothstep(0.0, 0.18, d.y) * 0.85);
+      }
       gl_FragColor = vec4(c, 1.0);
       #include <tonemapping_fragment>
       #include <colorspace_fragment>
@@ -55,57 +98,74 @@ const sky = new THREE.Mesh(new THREE.SphereGeometry(50000, 32, 16), new THREE.Sh
 sky.frustumCulled = false;
 scene.add(sky);
 
-const hemi = new THREE.HemisphereLight(0xdde9ff, 0x7d8696, 1.25);
+const hemi = new THREE.HemisphereLight(0xd8e6ff, 0x8a8f9c, 1.15);
 scene.add(hemi);
-const sun = new THREE.DirectionalLight(0xfff0dc, 2.3);
+const sun = new THREE.DirectionalLight(0xfff0dc, 2.5);
 const SUN_DIR = new THREE.Vector3(-0.45, 0.62, 0.64).normalize(); // from the south-west, afternoon
 sky.material.uniforms.sunDir.value.copy(SUN_DIR);
 sun.castShadow = true;
 sun.shadow.mapSize.set(2048, 2048);
-Object.assign(sun.shadow.camera, { left: -70, right: 70, top: 70, bottom: -70, near: 1, far: 600 });
-sun.shadow.bias = -0.0004;
-sun.shadow.normalBias = 0.6;
+Object.assign(sun.shadow.camera, { left: -90, right: 90, top: 90, bottom: -90, near: 1, far: 800 });
+sun.shadow.bias = -0.0003;
+sun.shadow.normalBias = 0.5;
 scene.add(sun, sun.target);
 
-const terrainMat = new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true });
+const terrainMat = snowMaterial();
 const objMat = new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true });
 
-let ground, terrain, forest, lifts, pistes, player, crowd, rmap, features;
+let ground, terrain, forest, lifts, pistes, player, crowd, rmap, features, buildingTiles = [];
 
 // ---------------------------------------------------------------- loading
 async function load() {
-  const files = [['data/height.bin.gz', 2.6e6], ['data/surface.bin.gz', 0.2e6], ['data/backdrop.bin.gz', 0.43e6], ['data/features.json', 0.66e6]];
+  const files = [['data/height.bin.gz', 2.6e6], ['data/surface.bin.gz', 0.2e6], ['data/piste5.bin.gz', 0.17e6], ['data/backdrop.bin.gz', 0.43e6], ['data/features.json', 0.66e6]];
   const total = files.reduce((a, f) => a + f[1], 0);
   let got = 0;
   const bar = $('loadbar').firstElementChild;
-  const onBytes = (n) => { got += n; bar.style.width = `${Math.min(95, (got / total) * 95)}%`; };
-  const [hb, sb, bb, fb] = await Promise.all(files.map(([u]) => fetchBytes(u, onBytes)));
+  const onBytes = (n) => { got += n; bar.style.width = `${Math.min(80, (got / total) * 80)}%`; };
+  const [hb, sb, pb, bb, fb] = await Promise.all(files.map(([u]) => fetchBytes(u, onBytes)));
   $('loadtext').textContent = 'Building the mountains…';
   await new Promise((r) => setTimeout(r, 20));
   const height = decodeHeights(hb);
   const surface = new Uint8Array(sb.slice(24));
   void readHeader(sb);
+  const piste = new Uint8Array(pb.slice(24));
   const back = decodeHeights(bb);
   features = JSON.parse(new TextDecoder().decode(fb));
-  ground = new Ground(height, surface);
-  terrain = new Terrain(ground, scene, terrainMat);
+  ground = new Ground(height, surface, piste);
+  terrain = new Terrain(ground, scene, terrainMat, new URL('./terrainWorker.js', import.meta.url));
   scene.add(buildBackdrop(back, ground, terrainMat));
   forest = new Forest(ground, scene, objMat);
-  for (const m of buildBuildings(features.buildings, ground, objMat)) scene.add(m);
-  lifts = new Lifts(features.lifts, ground, scene, objMat, riderGeometry());
+  buildingTiles = buildBuildings(features.buildings, ground, objMat);
+  for (const t of buildingTiles) { scene.add(t.near, t.far); t.near.visible = false; }
+  lifts = new Lifts(features.lifts, ground, scene, objMat, riderGeometries(objMat));
   pistes = new PisteIndex(features.pistes, ground);
   player = new Player(scene, objMat, ground, forest);
-  crowd = new Crowd(scene, objMat, pistes, ground, touchDevice ? 50 : 100);
+  crowd = new Crowd(scene, objMat, pistes, ground, 100);
   rmap = new ResortMap(ground, features, lifts);
   spawnAtLift(lifts.list.find((L) => L.name === 'Almbahn') || lifts.list[0], 'top');
   applyQuality();
   camState.pos.copy(player.pos).add(new THREE.Vector3(0, 30, -60));
   // build what's around the start before the button lights up
-  for (let k = 0; k < 40 && terrain.update(player.pos, 1e9) > 0; k++);
+  $('loadtext').textContent = 'Shaping the snow…';
+  const t0 = performance.now();
+  for (;;) {
+    const waiting = terrain.update(player.pos);
+    bar.style.width = `${80 + 20 * (1 - Math.min(waiting, 60) / 60)}%`;
+    if (waiting === 0 || performance.now() - t0 > 25000) break;
+    await new Promise((r) => setTimeout(r, 30));
+  }
   forest.update(player.pos, terrain, 1e9);
+  updateBuildings(player.pos);
   bar.style.width = '100%';
-  $('loadtext').textContent = 'Ready.';
+  $('loadtext').textContent = `Ready (graphics: ${tier.name}).`;
   $('go').disabled = false;
+}
+
+function updateBuildings(cam) {
+  for (const t of buildingTiles) {
+    const near = Math.hypot(t.x - cam.x, t.z - cam.z) < tier.bld;
+    t.near.visible = near; t.far.visible = !near;
+  }
 }
 
 let lastTop = null;
@@ -135,8 +195,8 @@ addEventListener('keydown', (e) => {
   else if (k === 'escape') { if (mapOpen) toggleMap(); if (helpOpen) toggleHelp(); }
   else if (k === 'h' || k === 'f1') { e.preventDefault(); toggleHelp(); }
   else if (k === 'c') camState.mode = (camState.mode + 1) % 3;
-  else if (k === 'v') { terrain.strongTint = !terrain.strongTint; terrain.rebuildAll(); toast(terrain.strongTint ? 'Piste colours on' : 'Piste colours off'); }
-  else if (k === 'g') { quality.high = !quality.high; applyQuality(); toast(quality.high ? 'Graphics: high' : 'Graphics: low'); }
+  else if (k === 'v') { terrain.setTint(!terrain.strongTint); toast(terrain.strongTint ? 'Piste colours on' : 'Piste colours off'); }
+  else if (k === 'g') { tier = TIERS[ORDER[(ORDER.indexOf(tier.name) + 1) % 3]]; resScale = 1; applyQuality(); toast(`Graphics: ${tier.name}`); }
   else if (k === 'e') tryRide();
   else if (k === 'r' && lastTop) spawnAtLift(lastTop, 'top');
   else if (k === ' ' && !player.ride) player.input.jump = true;
@@ -312,6 +372,7 @@ function updateCamera(dt) {
   camState.snap = false;
   camera.position.copy(camState.pos);
   camera.lookAt(camState.look);
+  if (window.__photo) { const ph = window.__photo; camera.position.set(ph[0], ph[1], ph[2]); camera.lookAt(ph[3], ph[4], ph[5]); }
   const fovTarget = 60 + clamp(player.speed - 12, 0, 25) * 0.5;
   camera.fov = lerp(camera.fov, fovTarget, 1 - Math.exp(-2 * dt));
   camera.updateProjectionMatrix();
@@ -321,7 +382,7 @@ function updateCamera(dt) {
 }
 
 // ---------------------------------------------------------------- loop
-let last = performance.now(), streamT = 0, fpsAcc = 0, fpsN = 0, autoLow = false;
+let last = performance.now(), streamT = 0, perfT = 0, perfN = 0, goodWindows = 0, slowWindows = 0;
 function frame(now) {
   requestAnimationFrame(frame);
   const dt = Math.min((now - last) / 1000, 0.1);
@@ -343,18 +404,26 @@ function frame(now) {
   crowd.update(dt, player.pos);
   updateCamera(dt);
   streamT -= dt;
-  if (streamT <= 0) { streamT = 0.25; terrain.update(camera.position, 5); forest.update(camera.position, terrain, 4); }
+  if (streamT <= 0) { streamT = 0.25; terrain.update(camera.position); forest.update(camera.position, terrain, 4); updateBuildings(camera.position); }
+  sky.material.uniforms.time.value += dt;
   updateHud(dt);
   updateAudio();
   renderer.render(scene, camera);
-  // drop to low graphics automatically if the first seconds are slow
-  if (!autoLow) {
-    fpsAcc += dt; fpsN++;
-    if (fpsAcc > 6) {
-      autoLow = true;
-      if (fpsN / fpsAcc < 28 && quality.high) { quality.high = false; applyQuality(); toast('Graphics: low (press G for high)'); }
-    }
-  }
+  adaptResolution(dt);
+}
+
+/** Dynamic resolution: trade pixels for frame rate, then drop a quality tier if that isn't enough. */
+function adaptResolution(dt) {
+  perfT += dt; perfN++;
+  if (perfT < 1.5) return;
+  const fps = perfN / perfT;
+  perfT = 0; perfN = 0;
+  if (fps < 45 && resScale > 0.6) { resScale = Math.max(0.6, resScale - 0.1); renderer.setPixelRatio(pixelRatio()); goodWindows = 0; }
+  else if (fps > 56) { if (++goodWindows >= 4 && resScale < 1) { resScale = Math.min(1, resScale + 0.05); renderer.setPixelRatio(pixelRatio()); goodWindows = 0; } }
+  else goodWindows = 0;
+  if (fps < 30 && resScale <= 0.6) {
+    if (++slowWindows >= 2 && tier.name !== 'low') { tier = TIERS[ORDER[ORDER.indexOf(tier.name) - 1]]; resScale = 0.8; applyQuality(); toast(`Graphics: ${tier.name} (G to change)`); slowWindows = 0; }
+  } else slowWindows = 0;
 }
 
 $('go').addEventListener('click', () => {
@@ -369,4 +438,4 @@ $('go').addEventListener('click', () => {
 resize();
 requestAnimationFrame(frame);
 load().catch((e) => { console.error(e); $('loadtext').textContent = `Could not load: ${e.message}`; });
-window.__game = () => ({ player, lifts, terrain, forest, ground, camState, renderer, toggleMap, spawnAtLift });
+window.__game = () => ({ player, lifts, terrain, forest, ground, camState, renderer, toggleMap, spawnAtLift, tier, resScale });

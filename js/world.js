@@ -5,76 +5,183 @@ import { Builder, srgb, mat, hash, clamp } from './util.js';
 export const toWorld = (X, Y) => new THREE.Vector3(Y, 0, -X); // data (north, east) -> three
 
 // ---------------------------------------------------------------- buildings
-const WALLS = [srgb(0.55, 0.38, 0.24), srgb(0.62, 0.45, 0.3), srgb(0.9, 0.86, 0.78), srgb(0.95, 0.93, 0.88), srgb(0.82, 0.72, 0.58), srgb(0.45, 0.31, 0.2)];
-const ROOF = srgb(0.96, 0.97, 1.0), ROOF_EDGE = srgb(0.35, 0.25, 0.2), WINDOW = srgb(0.25, 0.3, 0.38);
+const PLASTER = [srgb(0.96, 0.95, 0.91), srgb(0.95, 0.91, 0.8), srgb(0.96, 0.9, 0.76), srgb(0.95, 0.87, 0.84), srgb(0.9, 0.92, 0.9)];
+const WOOD = [srgb(0.42, 0.27, 0.16), srgb(0.5, 0.33, 0.2), srgb(0.33, 0.21, 0.13)];
+const SHUTTER = [srgb(0.2, 0.4, 0.25), srgb(0.55, 0.15, 0.12), srgb(0.32, 0.22, 0.14)];
+const SNOW = srgb(0.97, 0.98, 1.0), EAVE = srgb(0.3, 0.2, 0.13), GLASS = srgb(0.2, 0.27, 0.36), STONE = srgb(0.55, 0.54, 0.52), CHIMNEY = srgb(0.62, 0.6, 0.58);
+const TILE = 640;
 
-export function buildBuildings(list, ground, material) {
-  const groups = new Map();
+function polyArea(pts) {
+  let a = 0;
+  for (let k = 0; k < pts.length; k++) { const p = pts[k], q = pts[(k + 1) % pts.length]; a += p.x * q.z - q.x * p.z; }
+  return Math.abs(a) / 2;
+}
+/** Minimum-area oriented rectangle from the polygon's edge directions. */
+function orientedBox(pts) {
+  let best = null;
+  for (let k = 0; k < pts.length; k++) {
+    const p = pts[k], q = pts[(k + 1) % pts.length];
+    const len = Math.hypot(q.x - p.x, q.z - p.z);
+    if (len < 0.5) continue;
+    const ux = (q.x - p.x) / len, uz = (q.z - p.z) / len;
+    let a0 = Infinity, a1 = -Infinity, b0 = Infinity, b1 = -Infinity;
+    for (const r of pts) { const a = r.x * ux + r.z * uz, b = -r.x * uz + r.z * ux; a0 = Math.min(a0, a); a1 = Math.max(a1, a); b0 = Math.min(b0, b); b1 = Math.max(b1, b); }
+    const area = (a1 - a0) * (b1 - b0);
+    if (!best || area < best.area) best = { area, ux, uz, a0, a1, b0, b1 };
+  }
+  if (!best) return { area: Infinity };
+  const { ux, uz, a0, a1, b0, b1 } = best;
+  const ca = (a0 + a1) / 2, cb = (b0 + b1) / 2;
+  let hl = (a1 - a0) / 2, hw = (b1 - b0) / 2, u = new THREE.Vector3(ux, 0, uz), w = new THREE.Vector3(-uz, 0, ux);
+  const c = new THREE.Vector3(ca * ux - cb * uz, 0, ca * uz + cb * ux);
+  if (hw > hl) { [hl, hw] = [hw, hl]; const t = u; u = w; w = t.clone().negate(); }
+  return { c, u, w, hl, hw, area: best.area };
+}
+
+/** A Tyrolean chalet on an oriented rectangle. detail adds windows, shutters, balconies, eaves and a chimney. */
+function chalet(b, box, lo, hi, floors, n, detail) {
+  const { c, u, w, hl, hw } = box;
+  const v = (al, aw, y) => new THREE.Vector3(c.x + u.x * al + w.x * aw, y, c.z + u.z * al + w.z * aw);
+  const style = hash(n, 8);
+  const plaster = PLASTER[Math.floor(hash(n, 6) * PLASTER.length)], wood = WOOD[Math.floor(hash(n, 7) * WOOD.length)];
+  const allWood = style > 0.85, allPlaster = style < 0.25;
+  const f0 = Math.max(lo, hi - 1.0), fh = 2.9;
+  const eave = f0 + floors * fh;
+  const sides = [[hl, -hw, hl, hw], [hl, hw, -hl, hw], [-hl, hw, -hl, -hw], [-hl, -hw, hl, -hw]];
+  const quad = (A, B, C, D, out, col) => { b.triFacing(A, B, C, out, col); b.triFacing(A, C, D, out, col); };
+  const outOf = (s) => { const [a1, w1, a2, w2] = sides[s]; return new THREE.Vector3(u.x * (a1 + a2) + w.x * (w1 + w2), 0, u.z * (a1 + a2) + w.z * (w1 + w2)); };
+  for (let s = 0; s < 4; s++) { const [a1, w1, a2, w2] = sides[s]; quad(v(a1, w1, lo - 1.5), v(a2, w2, lo - 1.5), v(a2, w2, f0 + 0.3), v(a1, w1, f0 + 0.3), outOf(s), STONE); }
+  for (let f = 0; f < floors; f++) {
+    const y0 = f0 + f * fh + (f ? 0 : 0.3), y1 = f0 + (f + 1) * fh;
+    const col = allWood ? wood : allPlaster ? plaster : f === 0 || (floors > 3 && f === 1) ? plaster : wood;
+    for (let s = 0; s < 4; s++) {
+      const [a1, w1, a2, w2] = sides[s], out = outOf(s);
+      quad(v(a1, w1, y0), v(a2, w2, y0), v(a2, w2, y1), v(a1, w1, y1), out, col);
+      if (!detail) continue;
+      const len = Math.hypot(a2 - a1, w2 - w1);
+      const nwin = Math.floor((len - 1.5) / 2.6);
+      const o = out.clone().normalize().multiplyScalar(0.06);
+      const da = (a2 - a1) / len, dw = (w2 - w1) / len;
+      for (let k = 0; k < nwin; k++) {
+        const t0 = (k + 0.5) / nwin;
+        const ca = a1 + (a2 - a1) * t0, cw = w1 + (w2 - w1) * t0;
+        const ww = 0.5, wy0 = f0 + f * fh + 0.95, wy1 = wy0 + 1.15;
+        const P = (t, y) => v(ca + da * t, cw + dw * t, y).add(o);
+        quad(P(-ww, wy0), P(ww, wy0), P(ww, wy1), P(-ww, wy1), out, GLASS);
+        if (col === plaster && hash(n, 9) > 0.4) {
+          const sh = SHUTTER[Math.floor(hash(n, 10) * SHUTTER.length)];
+          quad(P(-ww - 0.45, wy0), P(-ww - 0.02, wy0), P(-ww - 0.02, wy1), P(-ww - 0.45, wy1), out, sh);
+          quad(P(ww + 0.02, wy0), P(ww + 0.45, wy0), P(ww + 0.45, wy1), P(ww + 0.02, wy1), out, sh);
+        }
+      }
+    }
+    if (detail && f >= 1 && !allPlaster && hl > 3.5) {
+      const yaw = Math.atan2(u.x, u.z), L = hl * 1.7;
+      for (const sgn of [-1, 1]) {
+        const bc = v(0, sgn * (hw + 0.6), f0 + f * fh);
+        b.add(new THREE.BoxGeometry(1.2, 0.18, L), wood, mat(bc.x, bc.y, bc.z, 0, yaw, 0));
+        const rc = v(0, sgn * (hw + 1.15), f0 + f * fh + 0.5);
+        b.add(new THREE.BoxGeometry(0.08, 0.85, L), wood, mat(rc.x, rc.y, rc.z, 0, yaw, 0));
+      }
+    }
+  }
+  const pitch = 0.5 + hash(n, 11) * 0.15;
+  const ov = detail ? 1.1 : 0.6, ovg = detail ? 0.9 : 0.5;
+  const ridge = eave + hw * pitch, eY = eave - ov * pitch, L = hl + ovg, t = 0.32;
+  for (const sgn of [-1, 1]) {
+    const out = new THREE.Vector3(w.x * sgn, 1, w.z * sgn);
+    quad(v(-L, sgn * (hw + ov), eY), v(L, sgn * (hw + ov), eY), v(L, 0, ridge), v(-L, 0, ridge), out, SNOW);
+    if (detail) {
+      quad(v(-L, sgn * (hw + ov), eY - t), v(L, sgn * (hw + ov), eY - t), v(L, 0, ridge - t), v(-L, 0, ridge - t), new THREE.Vector3(0, -1, 0), EAVE);
+      quad(v(-L, sgn * (hw + ov), eY - t), v(L, sgn * (hw + ov), eY - t), v(L, sgn * (hw + ov), eY), v(-L, sgn * (hw + ov), eY), new THREE.Vector3(w.x * sgn, 0, w.z * sgn), EAVE);
+    }
+    const gout = new THREE.Vector3(u.x * sgn, 0, u.z * sgn);
+    b.triFacing(v(sgn * hl, -hw, eave), v(sgn * hl, hw, eave), v(sgn * hl, 0, ridge - 0.05), gout, allPlaster && !detail ? plaster : wood);
+    if (detail) for (const s2 of [-1, 1]) b.triFacing(v(sgn * L, s2 * (hw + ov), eY), v(sgn * L, 0, ridge), v(sgn * L, s2 * (hw + ov), eY - t), gout, EAVE);
+  }
+  if (detail && hash(n, 12) > 0.3) {
+    const ch = v(hl * 0.4, hw * 0.35, 0), y = eave + (hw - hw * 0.35) * pitch, yaw = Math.atan2(u.x, u.z);
+    b.add(new THREE.BoxGeometry(0.6, 1.6, 0.6), CHIMNEY, mat(ch.x, y + 0.5, ch.z, 0, yaw, 0));
+    b.add(new THREE.BoxGeometry(0.75, 0.15, 0.75), SNOW, mat(ch.x, y + 1.35, ch.z, 0, yaw, 0));
+  }
+}
+
+/** Any footprint: straight walls, flat or hipped roof. */
+function genericBuilding(b, pts, lo, hi, H, flat, n, detail) {
   const v = (x, y, z) => new THREE.Vector3(x, y, z);
+  let cx = 0, cz = 0;
+  for (const p of pts) { cx += p.x; cz += p.z; }
+  cx /= pts.length; cz /= pts.length;
+  const area = polyArea(pts);
+  const base = lo - 1.5, top = hi + H * 0.8;
+  const wall = PLASTER[Math.floor(hash(n, 6) * PLASTER.length)];
+  for (let k = 0; k < pts.length; k++) {
+    const p = pts[k], q = pts[(k + 1) % pts.length];
+    const out = v((p.x + q.x) / 2 - cx, 0, (p.z + q.z) / 2 - cz);
+    b.triFacing(v(p.x, base, p.z), v(q.x, base, q.z), v(q.x, top, q.z), out, wall);
+    b.triFacing(v(p.x, base, p.z), v(q.x, top, q.z), v(p.x, top, p.z), out, wall);
+    if (detail && p.distanceTo(q) > 4) {
+      const o = out.clone().normalize().multiplyScalar(0.08);
+      for (let y0 = hi + 1; y0 + 1.3 < top - 0.5; y0 += 3) {
+        const pp = p.clone().lerp(q, 0.12).add(o), qq = p.clone().lerp(q, 0.88).add(o);
+        b.triFacing(v(pp.x, y0, pp.z), v(qq.x, y0, qq.z), v(qq.x, y0 + 1.2, qq.z), out, GLASS);
+        b.triFacing(v(pp.x, y0, pp.z), v(qq.x, y0 + 1.2, qq.z), v(pp.x, y0 + 1.2, pp.z), out, GLASS);
+      }
+    }
+  }
+  if (flat || area > 1500 || pts.length > 14) {
+    const tris = THREE.ShapeUtils.triangulateShape(pts.map((p) => new THREE.Vector2(p.x, p.z)), []);
+    for (const [i, j, k] of tris) b.triFacing(v(pts[i].x, top, pts[i].z), v(pts[j].x, top, pts[j].z), v(pts[k].x, top, pts[k].z), v(0, 1, 0), SNOW);
+  } else {
+    const apex = v(cx, top + Math.min(7, 0.45 * Math.sqrt(area)), cz);
+    for (let k = 0; k < pts.length; k++) {
+      const p = pts[k], q = pts[(k + 1) % pts.length];
+      const ep = v(p.x + (p.x - cx) * 0.12, top - 0.4, p.z + (p.z - cz) * 0.12), eq = v(q.x + (q.x - cx) * 0.12, top - 0.4, q.z + (q.z - cz) * 0.12);
+      b.triFacing(ep, eq, apex, v(0, 1, 0), SNOW);
+      b.triFacing(ep, eq, v(eq.x, top - 0.8, eq.z), v((p.x + q.x) / 2 - cx, 0, (p.z + q.z) / 2 - cz), EAVE);
+    }
+  }
+}
+
+/** Buildings in 640 m tiles, each with a detailed and a simple mesh. */
+export function buildBuildings(list, ground, material) {
+  const tiles = new Map();
   list.forEach(([, height, flat, flatPts], n) => {
     const pts = [];
     for (let k = 0; k < flatPts.length; k += 2) pts.push(toWorld(flatPts[k], flatPts[k + 1]));
     if (pts.length > 3 && pts[0].distanceTo(pts[pts.length - 1]) < 0.5) pts.pop();
     if (pts.length < 3) return;
-    let lo = Infinity, hi = -Infinity, cx = 0, cz = 0, area = 0;
-    for (let k = 0; k < pts.length; k++) {
-      const p = pts[k], q = pts[(k + 1) % pts.length];
-      const h = ground.height(p.x, p.z);
-      lo = Math.min(lo, h); hi = Math.max(hi, h);
-      cx += p.x; cz += p.z; area += p.x * q.z - q.x * p.z;
-    }
-    area = Math.abs(area) / 2;
+    const area = polyArea(pts);
     if (area < 12) return;
+    let lo = Infinity, hi = -Infinity, cx = 0, cz = 0;
+    for (const p of pts) { const h = ground.height(p.x, p.z); lo = Math.min(lo, h); hi = Math.max(hi, h); cx += p.x; cz += p.z; }
     cx /= pts.length; cz /= pts.length;
-    const H = clamp(height || (area > 400 ? 11 : 7.5), 3.5, 30);
-    const base = lo - 1.5, top = hi + H * 0.8;
-    const key = `${Math.floor(cx / 1280)},${Math.floor(cz / 1280)}`;
-    if (!groups.has(key)) groups.set(key, new Builder());
-    const b = groups.get(key);
-    const wall = WALLS[Math.floor(hash(n, 5) * WALLS.length)];
-    const c = v(cx, 0, cz);
-    for (let k = 0; k < pts.length; k++) {
-      const p = pts[k], q = pts[(k + 1) % pts.length];
-      const out = v((p.x + q.x) / 2 - cx, 0, (p.z + q.z) / 2 - cz);
-      const A = v(p.x, base, p.z), B = v(q.x, base, q.z), Cq = v(q.x, top, q.z), D = v(p.x, top, p.z);
-      b.triFacing(A, B, Cq, out, wall); b.triFacing(A, Cq, D, out, wall);
-      // a dark window band on longer walls
-      const len = p.distanceTo(q);
-      if (len > 5 && top - hi > 4) {
-        const y0 = hi + 1.2, y1 = y0 + 1.3, s = 0.15;
-        const pp = p.clone().lerp(q, 0.2), qq = p.clone().lerp(q, 0.8), o = out.clone().normalize().multiplyScalar(s);
-        const a2 = v(pp.x + o.x, y0, pp.z + o.z), b2 = v(qq.x + o.x, y0, qq.z + o.z), c2 = v(qq.x + o.x, y1, qq.z + o.z), d2 = v(pp.x + o.x, y1, pp.z + o.z);
-        b.triFacing(a2, b2, c2, out, WINDOW); b.triFacing(a2, c2, d2, out, WINDOW);
-      }
-    }
-    if (flat || area > 900 || pts.length > 10) {
-      const contour = pts.map((p) => new THREE.Vector2(p.x, p.z));
-      const tris = THREE.ShapeUtils.triangulateShape(contour, []);
-      for (const [i, j, k] of tris) b.triFacing(v(pts[i].x, top, pts[i].z), v(pts[j].x, top, pts[j].z), v(pts[k].x, top, pts[k].z), v(0, 1, 0), ROOF);
+    const tx = Math.floor(cx / TILE), tz = Math.floor(cz / TILE), key = `${tx},${tz}`;
+    let t = tiles.get(key);
+    if (!t) tiles.set(key, (t = { near: new Builder(), far: new Builder(), x: (tx + 0.5) * TILE, z: (tz + 0.5) * TILE }));
+    const box = orientedBox(pts);
+    if (!flat && area / box.area > 0.78 && box.area < 2500 && box.hw > 2) {
+      const floors = Math.max(1, clamp(height ? Math.round(height / 3) : area < 90 ? 2 : area < 260 ? 3 : area < 700 ? 4 : 5, 1, 7) - (hash(n, 13) < 0.2 ? 1 : 0));
+      chalet(t.near, box, lo, hi, floors, n, true);
+      chalet(t.far, box, lo, hi, floors, n, false);
     } else {
-      // hip roof with overhang, snow on top
-      const rise = Math.min(7, 0.45 * Math.sqrt(area));
-      const apex = v(cx, top + rise, cz);
-      for (let k = 0; k < pts.length; k++) {
-        const p = pts[k], q = pts[(k + 1) % pts.length];
-        const ep = v(p.x + (p.x - cx) * 0.12, top - 0.4, p.z + (p.z - cz) * 0.12), eq = v(q.x + (q.x - cx) * 0.12, top - 0.4, q.z + (q.z - cz) * 0.12);
-        b.triFacing(ep, eq, apex, v(0, 1, 0), ROOF);
-        b.triFacing(ep, eq, v(eq.x, top - 0.8, eq.z), v((p.x + q.x) / 2 - cx, 0, (p.z + q.z) / 2 - cz), ROOF_EDGE);
-      }
+      const H = clamp(height || (area > 400 ? 11 : 7.5), 3.5, 30);
+      genericBuilding(t.near, pts, lo, hi, H, flat, n, true);
+      genericBuilding(t.far, pts, lo, hi, H, flat, n, false);
     }
-    void c;
   });
-  const meshes = [];
-  for (const b of groups.values()) {
-    const m = new THREE.Mesh(b.geometry(), material);
-    m.castShadow = true; m.receiveShadow = true; m.matrixAutoUpdate = false;
-    meshes.push(m);
+  const out = [];
+  for (const t of tiles.values()) {
+    const near = new THREE.Mesh(t.near.geometry(), material), far = new THREE.Mesh(t.far.geometry(), material);
+    for (const m of [near, far]) { m.receiveShadow = true; m.matrixAutoUpdate = false; }
+    near.castShadow = true;
+    out.push({ x: t.x, z: t.z, near, far });
   }
-  return meshes;
+  return out;
 }
 
 // ---------------------------------------------------------------- lifts
-const STEEL = srgb(0.55, 0.57, 0.6), STATION = srgb(0.32, 0.36, 0.42), STATION_ROOF = srgb(0.9, 0.92, 0.95), CABLE = 0x222831;
+const STEEL = srgb(0.55, 0.57, 0.6), STATION = srgb(0.74, 0.75, 0.76), STATION_GLASS = srgb(0.42, 0.52, 0.62), STATION_WOOD = srgb(0.45, 0.3, 0.18), STATION_ROOF = srgb(0.96, 0.97, 1.0), CABLE = 0x222831;
 const SURFACE = new Set(['t-bar', 'platter', 'rope_tow', 'magic_carpet', 'j-bar', 'drag_lift']);
 
 class Polyline {
@@ -127,7 +234,7 @@ export class Lifts {
       const n = ground3.length;
       const dirs = ground3.map((p, k) => new THREE.Vector3().subVectors(ground3[Math.min(k + 1, n - 1)], ground3[Math.max(k - 1, 0)]).setY(0).normalize());
       const right = dirs.map((d) => new THREE.Vector3().crossVectors(d, up).normalize());
-      const ropeH = (k) => (k === 0 || k === n - 1 ? (surface ? 3.5 : 6) : H);
+      const ropeH = (k) => (k === 0 || k === n - 1 ? (surface ? 3.5 : 4.4) : H);
       const upRope = new Polyline(ground3.map((p, k) => p.clone().addScaledVector(right[k], gauge / 2).setY(p.y + ropeH(k))));
       const downRope = new Polyline(ground3.map((p, k) => p.clone().addScaledVector(right[k], -gauge / 2).setY(p.y + ropeH(k))).reverse());
       for (const rope of [upRope, downRope]) for (let k = 1; k < rope.p.length; k++) cables.push(rope.p[k - 1], rope.p[k]);
@@ -146,9 +253,13 @@ export class Lifts {
         } else {
           const len = gondola ? 22 : 16, w = gauge + 6;
           const o = k === 0 ? -0.35 : 0.35;
-          statics.add(new THREE.BoxGeometry(w, 5, len), STATION, mat(p.x + d.x * len * o, p.y + 1.5, p.z + d.z * len * o, 0, yaw, 0));
-          statics.add(new THREE.BoxGeometry(w + 1.5, 0.8, len + 2), STATION_ROOF, mat(p.x + d.x * len * o, p.y + 4.4, p.z + d.z * len * o, 0, yaw, 0));
-          statics.add(new THREE.BoxGeometry(w - 1, 2.2, len * 0.8), STATION, mat(p.x + d.x * len * o, p.y + 6, p.z + d.z * len * o, 0, yaw, 0));
+          const sx = p.x + d.x * len * o, sz = p.z + d.z * len * o;
+          statics.add(new THREE.BoxGeometry(w, 1.6, len), STATION, mat(sx, p.y - 0.2, sz, 0, yaw, 0));
+          statics.add(new THREE.BoxGeometry(w - 0.4, 3.8, len - 0.4), STATION_GLASS, mat(sx, p.y + 2.5, sz, 0, yaw, 0));
+          for (const e of [-1, 1]) statics.add(new THREE.BoxGeometry(0.5, 4.0, len), STATION_WOOD, mat(sx + Math.cos(yaw) * e * (w / 2 - 0.25), p.y + 2.5, sz - Math.sin(yaw) * e * (w / 2 - 0.25), 0, yaw, 0));
+          statics.add(new THREE.BoxGeometry(w + 2, 0.5, len + 3), STATION_WOOD, mat(sx, p.y + 4.65, sz, 0, yaw, 0));
+          statics.add(new THREE.BoxGeometry(w + 2.1, 0.35, len + 3.1), STATION_ROOF, mat(sx, p.y + 5.05, sz, 0, yaw, 0));
+          statics.add(new THREE.CylinderGeometry(gauge / 2 + 0.3, gauge / 2 + 0.3, 0.4, 16), STEEL, mat(p.x, p.y + ropeH(k) - 0.3, p.z));
         }
       }
       const speed = L.speed || (gondola ? 6 : surface ? 3 : 5);
@@ -183,11 +294,11 @@ export class Lifts {
     // riders sitting on chairs (about half full)
     let riders = 0;
     for (const L of this.list) if (L.type === 'chair') riders += L.count * Math.min(L.seats, 4);
-    this.riders = new THREE.InstancedMesh(riderGeo, material, Math.max(riders, 1));
-    this.riders.frustumCulled = false; this.riders.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    this.riders = new THREE.InstancedMesh(riderGeo.jacket, material, Math.max(riders, 1));
+    this.ridersRest = new THREE.InstancedMesh(riderGeo.rest, material, Math.max(riders, 1));
+    for (const m of [this.riders, this.ridersRest]) { m.frustumCulled = false; m.castShadow = true; m.instanceMatrix.setUsage(THREE.DynamicDrawUsage); scene.add(m); }
     const col = new THREE.Color();
-    for (let k = 0; k < riders; k++) this.riders.setColorAt(k, col.setHSL(hash(k, 11), 0.65, 0.45));
-    scene.add(this.riders);
+    for (let k = 0; k < riders; k++) this.riders.setColorAt(k, col.setHSL(hash(k, 11), 0.7, 0.42));
     this.time = 0;
   }
   addCarpet(L, b) {
@@ -220,30 +331,32 @@ export class Lifts {
     for (const L of this.list) {
       const near = Math.hypot(L.bottom.x - cam.x, L.bottom.z - cam.z) < 7000 || Math.hypot(L.top.x - cam.x, L.top.z - cam.z) < 7000;
       const m = this.inst[L.type];
+      if (!near) continue;
       for (let k = 0; k < L.count; k++) {
         const s = this.time * L.speed + k * (L.loop / L.count) + L.phase;
-        const i = idx[L.type]++;
-        if (!near) { M.compose(p, q, s0); m.setMatrixAt(i, M); continue; }
         this.loopAt(L, s, p, d);
+        const i = idx[L.type]++;
         e.set(0, Math.atan2(d.x, d.z), 0);
         q.setFromEuler(e);
         M.compose(p, q, L.surface ? this.dragScale(p) : s1);
         m.setMatrixAt(i, M);
-        if (L.type === 'chair') {
+        if (L.type === 'chair' && Math.hypot(p.x - cam.x, p.z - cam.z) < 1400) {
           const going = ((s % L.loop) + L.loop) % L.loop < L.up.length;
           const seats = Math.min(L.seats, 4);
           for (let j = 0; j < seats; j++) {
             const filled = going && hash(k, j, L.count) < 0.45;
-            if (!filled) { R.compose(p, q, s0); this.riders.setMatrixAt(r++, R); continue; }
+            if (!filled) continue;
             off.set((j - (seats - 1) / 2) * 0.75, 0, 0.1).applyQuaternion(q).add(p);
             R.compose(off, q, s1);
-            this.riders.setMatrixAt(r++, R);
+            this.riders.setMatrixAt(r, R); this.ridersRest.setMatrixAt(r++, R);
           }
         }
       }
     }
-    for (const m of Object.values(this.inst)) m.instanceMatrix.needsUpdate = true;
+    for (const t in this.inst) { this.inst[t].count = idx[t]; this.inst[t].instanceMatrix.needsUpdate = true; }
+    this.riders.count = this.ridersRest.count = r;
     this.riders.instanceMatrix.needsUpdate = true;
+    this.ridersRest.instanceMatrix.needsUpdate = true;
     void up;
   }
   /** Drag-lift hanger stretched from the rope down to hip height. */

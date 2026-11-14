@@ -41,7 +41,12 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: #cfe0f0; fon
 #touch button { pointer-events: auto; width: 64px; height: 64px; margin: 4px; border-radius: 50%; border: 0; background: rgba(255, 255, 255, 0.55); font: 600 15px system-ui; color: #123; touch-action: none; user-select: none; -webkit-user-select: none; }
 #touch .right { display: flex; flex-wrap: wrap; justify-content: flex-end; max-width: 220px; }
 #touch button.on { background: rgba(31, 111, 209, 0.75); color: #fff; }
-@media (max-width: 600px) {
+@media (pointer: coarse) {
+  #hint { display: none; }
+  #sound { top: 14px; bottom: auto; right: auto; left: 50%; transform: translateX(-50%); }
+  #touch .left button { width: 76px; height: 76px; }
+}
+@media (max-width: 600px), (max-height: 500px) {
   #minimap { width: 120px; height: 120px; }
   #speed b { font-size: 30px; }
   #hint { display: none; }

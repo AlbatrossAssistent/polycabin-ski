@@ -8,12 +8,15 @@ It's the web version of the PolyCabin Unreal ski game, rewritten in three.js.
 ## Controls
 A/D turn · W tuck (skate when slow) · S brake · Space jump (fast-forward on lifts) · E ride lift · M map (click to teleport) · C camera · V piste colours · G graphics · R back to last lift top · H help
 
-## What's optimised compared to the Unreal version
-- Terrain is 10 m cells (delta/planar-predicted int16, gzip): 2.6 MB instead of 50 MB of raw height and mask data.
-- Terrain streams in 640 m chunks with 4 LOD levels and skirts, built within a per-frame time budget.
-- Trees are placed by a deterministic hash (no tree data downloaded) and drawn as instanced meshes, thinned with distance.
-- Lift carriers, chair riders and the crowd are each one instanced draw call.
-- Buildings are merged into a handful of meshes; graphics drop to "low" automatically if the first seconds run under 28 fps.
+## Graphics and performance
+Built to look good but run on phones and laptops without a graphics card.
+
+- Terrain: smooth 5 m mesh near you (Catmull-Rom from 10 m data, so no extra download), coarser LODs further out, built in a Web Worker so the game never stutters.
+- Snow shader: soft drifts, corduroy on groomed runs (anti-aliased), sparkles up close; crisp piste edges from a 5 m piste layer with difficulty-coloured borders.
+- Spruce forests in three detail levels on 320 m tiles; Tyrolean chalets (wooden upper floors, balconies, shutters, snowy gable roofs) with a simple far version.
+- Jointed skier with knee IK, angulation, tuck and pole plants; ski tracks, snow spray, chair riders and a crowd, all instanced.
+- Quality tiers (low/medium/high, G to switch, `?q=low` in the URL). Phones start on medium; dynamic resolution keeps the frame rate up and drops a tier if needed.
+- Download about 4 MB (heights as planar-predicted int16, gzip).
 
 ## Data
 - Map data © OpenStreetMap contributors, ODbL 1.0 (https://www.openstreetmap.org/copyright).
