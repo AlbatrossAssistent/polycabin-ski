@@ -1,0 +1,49 @@
+:root { --ink: #10202f; --panel: rgba(250, 252, 255, 0.93); --accent: #1f6fd1; }
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; overflow: hidden; background: #cfe0f0; font: 14px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; color: var(--ink); }
+#view { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
+.hidden { display: none !important; }
+.panel { position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); background: var(--panel); border-radius: 14px; padding: 22px 26px; box-shadow: 0 10px 40px rgba(0, 30, 60, 0.25); max-width: calc(100vw - 32px); }
+#start { text-align: center; width: 460px; }
+#start h1 { margin: 0 0 4px; font-size: 30px; letter-spacing: 0.5px; }
+#start .sub { margin: 0 0 16px; color: #456; }
+#loadbar { height: 8px; background: #dde6ef; border-radius: 4px; overflow: hidden; }
+#loadbar i { display: block; height: 100%; width: 0; background: var(--accent); transition: width 0.2s; }
+#loadtext { color: #567; font-size: 13px; margin: 8px 0 14px; }
+#go { font: inherit; font-size: 17px; font-weight: 600; padding: 10px 28px; border: 0; border-radius: 10px; background: var(--accent); color: #fff; cursor: pointer; }
+#go:disabled { background: #9ab; cursor: wait; }
+#start .keys { font-size: 13px; color: #345; margin: 14px 0 6px; }
+#start .credits, #start .credits a { font-size: 11px; color: #789; }
+#hud { position: fixed; inset: 0; pointer-events: none; }
+#stats { position: absolute; left: 16px; top: 14px; color: #fff; text-shadow: 0 1px 3px rgba(0, 0, 0, 0.6); }
+#speed b { font-size: 40px; font-weight: 700; font-variant-numeric: tabular-nums; }
+#speed span { margin-left: 4px; font-size: 15px; }
+#alt { font-size: 15px; font-variant-numeric: tabular-nums; }
+#where { margin-top: 6px; font-size: 15px; font-weight: 600; }
+#where .dot { display: inline-block; width: 11px; height: 11px; border-radius: 50%; margin-right: 6px; border: 1.5px solid #fff; vertical-align: -1px; }
+#minimap { position: absolute; right: 16px; top: 14px; width: 200px; height: 200px; border-radius: 50%; border: 3px solid rgba(255, 255, 255, 0.85); box-shadow: 0 2px 12px rgba(0, 0, 0, 0.3); background: #eef; }
+#prompt { position: absolute; left: 50%; bottom: 90px; transform: translateX(-50%); background: rgba(10, 25, 40, 0.75); color: #fff; padding: 8px 16px; border-radius: 8px; font-size: 16px; white-space: nowrap; }
+#prompt:empty { display: none; }
+#toast { position: absolute; left: 50%; top: 22%; transform: translateX(-50%); color: #fff; font-size: 26px; font-weight: 700; text-shadow: 0 2px 6px rgba(0, 0, 0, 0.6); opacity: 0; transition: opacity 0.4s; text-align: center; }
+#toast.show { opacity: 1; }
+#hint { position: absolute; left: 16px; bottom: 12px; color: #fff; font-size: 12px; text-shadow: 0 1px 2px rgba(0, 0, 0, 0.7); opacity: 0.85; }
+#sound { position: absolute; right: 16px; bottom: 12px; pointer-events: auto; font-size: 20px; background: rgba(255, 255, 255, 0.7); border: 0; border-radius: 8px; width: 40px; height: 36px; cursor: pointer; }
+#mapview { position: fixed; inset: 0; background: rgba(15, 30, 45, 0.85); display: flex; flex-direction: column; }
+#mapview .bar { color: #fff; padding: 10px 16px; font-size: 13px; }
+#mapview .close { opacity: 0.7; }
+#mapwrap { flex: 1; overflow: hidden; display: flex; align-items: center; justify-content: center; padding: 0 16px 16px; }
+#bigmap { max-width: 100%; max-height: 100%; cursor: crosshair; border-radius: 6px; box-shadow: 0 4px 30px rgba(0, 0, 0, 0.5); }
+#help table { border-collapse: collapse; }
+#help td { padding: 3px 12px 3px 0; }
+#help td:first-child { font-weight: 600; white-space: nowrap; }
+#help h2 { margin: 0 0 10px; }
+#touch { position: fixed; inset: auto 0 0 0; padding: 12px; display: flex; justify-content: space-between; pointer-events: none; }
+#touch button { pointer-events: auto; width: 64px; height: 64px; margin: 4px; border-radius: 50%; border: 0; background: rgba(255, 255, 255, 0.55); font: 600 15px system-ui; color: #123; touch-action: none; user-select: none; -webkit-user-select: none; }
+#touch .right { display: flex; flex-wrap: wrap; justify-content: flex-end; max-width: 220px; }
+#touch button.on { background: rgba(31, 111, 209, 0.75); color: #fff; }
+@media (max-width: 600px) {
+  #minimap { width: 120px; height: 120px; }
+  #speed b { font-size: 30px; }
+  #hint { display: none; }
+  #prompt { bottom: 160px; font-size: 14px; }
+}

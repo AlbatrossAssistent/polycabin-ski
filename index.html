@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>PolyCabin Ski</title>
+<meta name="description" content="A low-poly ski game on the real terrain, lifts and pistes of Serfaus-Fiss-Ladis, in your browser.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22%3E%3Ctext y=%22.9em%22 font-size=%2290%22%3E%E2%9B%B7%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="style.css">
+<script type="importmap">
+{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js" } }
+</script>
+</head>
+<body>
+<canvas id="view"></canvas>
+
+<div id="hud" class="hidden">
+  <div id="stats">
+    <div id="speed"><b>0</b><span>km/h</span></div>
+    <div id="alt">0 m</div>
+    <div id="where"></div>
+  </div>
+  <canvas id="minimap" width="200" height="200"></canvas>
+  <div id="prompt"></div>
+  <div id="toast"></div>
+  <div id="hint">H help · M map · E ride lift · C camera · V piste colours · G graphics</div>
+  <button id="sound" title="Sound on/off">🔇</button>
+</div>
+
+<div id="touch" class="hidden">
+  <button data-k="left">◀</button><button data-k="right">▶</button>
+  <div class="right">
+    <button data-k="ride">E</button><button data-k="tuck">Tuck</button><button data-k="brake">Brake</button><button data-k="jump">Jump</button><button data-k="map">Map</button>
+  </div>
+</div>
+
+<div id="mapview" class="hidden">
+  <div class="bar"><b>Serfaus-Fiss-Ladis</b> · click anywhere to go there, click a lift's bottom station to queue for it · <span class="close">M / Esc to close</span></div>
+  <div id="mapwrap"><canvas id="bigmap"></canvas></div>
+</div>
+
+<div id="help" class="hidden panel">
+  <h2>Controls</h2>
+  <table>
+    <tr><td>A / D or ← →</td><td>Turn</td></tr>
+    <tr><td>W or ↑</td><td>Tuck (or skate when slow)</td></tr>
+    <tr><td>S or ↓</td><td>Brake (snowplough)</td></tr>
+    <tr><td>Space</td><td>Jump · on a lift: fast-forward</td></tr>
+    <tr><td>E</td><td>Ride the lift you're next to</td></tr>
+    <tr><td>M</td><td>Map (click to go somewhere)</td></tr>
+    <tr><td>C</td><td>Camera: chase, far, helmet</td></tr>
+    <tr><td>V</td><td>Piste colours on/off</td></tr>
+    <tr><td>G</td><td>Graphics: high or low</td></tr>
+    <tr><td>R</td><td>Back to the last lift top</td></tr>
+  </table>
+  <p>Close: H</p>
+</div>
+
+<div id="start" class="panel">
+  <h1>PolyCabin Ski</h1>
+  <p class="sub">Serfaus · Fiss · Ladis, Tyrol: real terrain, 63 lifts, 431 pistes</p>
+  <div id="loadbar"><i></i></div>
+  <p id="loadtext">Loading terrain…</p>
+  <button id="go" disabled>Start skiing</button>
+  <p class="keys">A/D turn · W tuck · S brake · Space jump · E ride lift · M map</p>
+  <p class="credits">Map data © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors (ODbL).
+  Elevation: AWS Terrain Tiles; Austria DGM (data.gv.at, CC BY 4.0), SRTM.</p>
+</div>
+
+<script type="module" src="js/main.js"></script>
+</body>
+</html>
